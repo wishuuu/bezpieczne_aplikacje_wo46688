@@ -57,7 +57,7 @@ impl openapi::apis::users::Users for ServerImpl {
         cookies: CookieJar,
         mut body: CreateRequest,
     ) -> Result<CreateUserResponse, ()> {
-        let val = body.validate();
+        let val = body.user.validate();
         if let Err(e) = val {
             return Ok(CreateUserResponse::Status400_BadRequest(Error::new(
                 build_response_header(),
@@ -132,7 +132,7 @@ impl openapi::apis::users::Users for ServerImpl {
         path_params: UpdateUserPathParams,
         body: UpdateRequest,
     ) -> Result<UpdateUserResponse, ()> {
-        let val = body.validate();
+        let val = body.user.validate();
         if let Err(e) = val {
             return Ok(UpdateUserResponse::Status400_BadRequest(Error::new(
                 build_response_header(),
