@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::RwLock;
-use uuid::Uuid;
+use uuid::{Uuid, uuid};
 use validator::Validate;
 
 struct ServerImpl {
@@ -26,8 +26,21 @@ struct ServerImpl {
 
 impl ServerImpl {
     fn new() -> Self {
+        let mut users = std::collections::HashMap::new();
+        users.insert(
+            uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"),
+            User {
+                id: Some(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8")),
+                name: "Adam".into(),
+                surname: "Mickiewicz".into(),
+                email: Some("mickiewicz@o2.pl".into()),
+                age: 37,
+                personal_id: "12345678900".into(),
+                citizenship: "PL".into(),
+            }
+        );
         ServerImpl {
-            users: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            users: Arc::new(RwLock::new(users)),
         }
     }
 }
@@ -59,7 +72,7 @@ impl openapi::apis::users::Users for ServerImpl {
         claims: Self::Claims,
         mut body: CreateRequest,
     ) -> Result<CreateUserResponse, ()> {
-        let val = body.validate();
+        let val = body.user.validate();
         if let Err(e) = val {
             return Ok(CreateUserResponse::Status400_BadRequest(Error::new(
                 build_response_header(),
@@ -134,16 +147,17 @@ impl openapi::apis::users::Users for ServerImpl {
         cookies: CookieJar,
         claims: Self::Claims,
         path_params: UpdateUserPathParams,
-        body: UpdateRequest,
+        mut body: UpdateRequest,
     ) -> Result<UpdateUserResponse, ()> {
-        let val = body.validate();
+        let val = body.user.validate();
+        body.user.id = Some(path_params.id);
         if let Err(e) = val {
             return Ok(UpdateUserResponse::Status400_BadRequest(Error::new(
                 build_response_header(),
                 e.to_string(),
             )));
         };
-        let collection = self.users.read().await;
+        let mut collection = self.users.write().await;
         match collection.get(&path_params.id) {
             None => Ok(UpdateUserResponse::Status404_UserNotFound(Error::new(
                 build_response_header(),
@@ -151,8 +165,9 @@ impl openapi::apis::users::Users for ServerImpl {
             ))),
             Some(user) => {
                 collection
-                    .clone()
-                    .insert(user.id.unwrap(), body.user.clone());
+                    .remove(&path_params.id);
+                collection
+                    .insert(path_params.id, body.user.clone());
                 Ok(UpdateUserResponse::Status200_Success(UserResponse {
                     response_header: build_request_header(),
                     user: body.user.clone(),
