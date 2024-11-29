@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use axum::extract::Host;
 use axum_extra::extract::CookieJar;
+use base64::prelude::*;
 use http::Method;
 use openapi::apis::users::{
     CreateUserResponse, DeleteUserResponse, GetAllUsersResponse, GetUserByIdResponse,
@@ -55,6 +56,7 @@ impl openapi::apis::users::Users for ServerImpl {
         method: Method,
         host: Host,
         cookies: CookieJar,
+        claims: Self::Claims,
         mut body: CreateRequest,
     ) -> Result<CreateUserResponse, ()> {
         let val = body.validate();
@@ -97,6 +99,7 @@ impl openapi::apis::users::Users for ServerImpl {
         method: Method,
         host: Host,
         cookies: CookieJar,
+        claims: Self::Claims,
     ) -> Result<GetAllUsersResponse, ()> {
         Ok(GetAllUsersResponse::Status200_Success(UserListResponse {
             response_header: build_request_header(),
@@ -109,6 +112,7 @@ impl openapi::apis::users::Users for ServerImpl {
         method: Method,
         host: Host,
         cookies: CookieJar,
+        claims: Self::Claims,
         path_params: GetUserByIdPathParams,
     ) -> Result<GetUserByIdResponse, ()> {
         match self.users.read().await.get(&path_params.id) {
@@ -181,7 +185,29 @@ impl ApiKeyAuthHeader for ServerImpl {
         'c: 'async_trait,
         Self: 'async_trait,
     {
-        Box::pin(async move { Some(()) })
+        match _key {
+            "Bearer" => Box::pin(async move { Some(()) }),
+            "Basic" => {
+                let value = _headers
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok());
+                if let Some(value) = value {
+                    let value = value.to_string();
+                    let value = value.split(' ').last().unwrap();
+                    let value = base64::engine::general_purpose::STANDARD.decode(value);
+                    let value = String::from_utf8(value.unwrap()).unwrap();
+
+                    if value == "wo46688:123456" {
+                        Box::pin(async move { Some(()) })
+                    } else {
+                        Box::pin(async move { None })
+                    }
+                } else {
+                    Box::pin(async move { None })
+                }
+            }
+            _ => Box::pin(async move { None }),
+        }
     }
 }
 
