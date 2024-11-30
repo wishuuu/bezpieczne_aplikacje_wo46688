@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use axum::{body::Body, extract::*, response::Response, routing::*};
 use axum_extra::extract::{CookieJar, Multipart};
 use bytes::Bytes;
+use chrono::DateTime;
 use http::{header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use tracing::error;
 use validator::{Validate, ValidationErrors};
@@ -70,12 +71,6 @@ where
         .extract_claims_from_header(&headers, "Basic")
         .await;
     let claims = None.or(claims_in_header);
-    let Some(claims) = claims else {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::empty())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
-    };
 
     #[allow(clippy::redundant_closure)]
     let validation = tokio::task::spawn_blocking(move || create_user_validation(body))
@@ -89,10 +84,22 @@ where
             .map_err(|_| StatusCode::BAD_REQUEST);
     };
 
-    let result = api_impl
-        .as_ref()
-        .create_user(method, host, cookies, claims, body)
-        .await;
+    let result = if let Some(claims) = claims {
+        api_impl
+            .as_ref()
+            .create_user(method, host, cookies, claims, body)
+            .await
+    } else {
+        Ok(apis::users::CreateUserResponse::Status401_Unauthorized(
+            models::Error::new(
+                models::ResponseHeader {
+                    request_id: uuid::Uuid::new_v4(),
+                    send_date: chrono::Utc::now(),
+                },
+                "401".into(),
+            ),
+        ))
+    };
 
     let mut response = Response::builder();
 
@@ -232,12 +239,6 @@ where
         .extract_claims_from_header(&headers, "Bearer")
         .await;
     let claims = None.or(claims_in_header);
-    let Some(claims) = claims else {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::empty())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
-    };
 
     #[allow(clippy::redundant_closure)]
     let validation = tokio::task::spawn_blocking(move || delete_user_validation(path_params))
@@ -250,11 +251,22 @@ where
             .body(Body::from(validation.unwrap_err().to_string()))
             .map_err(|_| StatusCode::BAD_REQUEST);
     };
-
-    let result = api_impl
-        .as_ref()
-        .delete_user(method, host, cookies, claims, path_params)
-        .await;
+    let result = if let Some(claims) = claims {
+        api_impl
+            .as_ref()
+            .delete_user(method, host, cookies, claims, path_params)
+            .await
+    } else {
+        Ok(apis::users::DeleteUserResponse::Status401_Unauthorized(
+            models::Error::new(
+                models::ResponseHeader {
+                    request_id: uuid::Uuid::new_v4(),
+                    send_date: chrono::Utc::now(),
+                },
+                "401".into(),
+            ),
+        ))
+    };
 
     let mut response = Response::builder();
 
@@ -393,12 +405,6 @@ where
         .extract_claims_from_header(&headers, "Basic")
         .await;
     let claims = None.or(claims_in_header);
-    let Some(claims) = claims else {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::empty())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
-    };
 
     #[allow(clippy::redundant_closure)]
     let validation = tokio::task::spawn_blocking(move || get_all_users_validation())
@@ -412,10 +418,22 @@ where
             .map_err(|_| StatusCode::BAD_REQUEST);
     };
 
-    let result = api_impl
-        .as_ref()
-        .get_all_users(method, host, cookies, claims)
-        .await;
+    let result = if let Some(claims) = claims {
+        api_impl
+            .as_ref()
+            .get_all_users(method, host, cookies, claims)
+            .await
+    } else {
+        Ok(apis::users::GetAllUsersResponse::Status401_Unauthorized(
+            models::Error::new(
+                models::ResponseHeader {
+                    request_id: uuid::Uuid::new_v4(),
+                    send_date: chrono::Utc::now(),
+                },
+                "401".into(),
+            ),
+        ))
+    };
 
     let mut response = Response::builder();
 
@@ -555,12 +573,6 @@ where
         .extract_claims_from_header(&headers, "Basic")
         .await;
     let claims = None.or(claims_in_header);
-    let Some(claims) = claims else {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::empty())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
-    };
 
     #[allow(clippy::redundant_closure)]
     let validation = tokio::task::spawn_blocking(move || get_user_by_id_validation(path_params))
@@ -574,10 +586,22 @@ where
             .map_err(|_| StatusCode::BAD_REQUEST);
     };
 
-    let result = api_impl
-        .as_ref()
-        .get_user_by_id(method, host, cookies, claims, path_params)
-        .await;
+    let result = if let Some(claims) = claims {
+        api_impl
+            .as_ref()
+            .get_user_by_id(method, host, cookies, claims, path_params)
+            .await
+    } else {
+        Ok(apis::users::GetUserByIdResponse::Status401_Unauthorized(
+            models::Error::new(
+                models::ResponseHeader {
+                    request_id: uuid::Uuid::new_v4(),
+                    send_date: chrono::Utc::now(),
+                },
+                "401".into(),
+            ),
+        ))
+    };
 
     let mut response = Response::builder();
 
@@ -751,12 +775,6 @@ where
         .extract_claims_from_header(&headers, "Bearer")
         .await;
     let claims = None.or(claims_in_header);
-    let Some(claims) = claims else {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::empty())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
-    };
 
     #[allow(clippy::redundant_closure)]
     let validation = tokio::task::spawn_blocking(move || update_user_validation(path_params, body))
@@ -770,10 +788,22 @@ where
             .map_err(|_| StatusCode::BAD_REQUEST);
     };
 
-    let result = api_impl
-        .as_ref()
-        .update_user(method, host, cookies, claims, path_params, body)
-        .await;
+    let result = if let Some(claims) = claims {
+        api_impl
+            .as_ref()
+            .update_user(method, host, cookies, claims, path_params, body)
+            .await
+    } else {
+        Ok(apis::users::UpdateUserResponse::Status401_Unauthorized(
+            models::Error::new(
+                models::ResponseHeader {
+                    request_id: uuid::Uuid::new_v4(),
+                    send_date: chrono::Utc::now(),
+                },
+                "401".into(),
+            ),
+        ))
+    };
 
     let mut response = Response::builder();
 
