@@ -30,3 +30,5 @@ tokio = { version = "1", default-features = false, features = [
 tracing = { version = "0.1", features = ["attributes"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 validator = { version = "0.19", features = ["derive"] }
+hmac = "0.12.1"
+jsonwebtoken = "9.3.0"

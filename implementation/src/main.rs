@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use axum::extract::Host;
 use axum_extra::extract::CookieJar;
 use base64::prelude::*;
+use hmac::{Hmac, Mac};
 use http::Method;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use openapi::apis::users::{
     CreateUserResponse, DeleteUserResponse, GetAllUsersResponse, GetUserByIdResponse,
     UpdateUserResponse,
@@ -12,11 +14,12 @@ use openapi::models::{
     CreateRequest, DeleteUserPathParams, Error, GetUserByIdPathParams, RequestHeader,
     ResponseHeader, UpdateRequest, UpdateUserPathParams, User, UserListResponse, UserResponse,
 };
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::RwLock;
-use uuid::{Uuid, uuid};
+use uuid::{uuid, Uuid};
 use validator::Validate;
 
 struct ServerImpl {
@@ -37,7 +40,7 @@ impl ServerImpl {
                 age: 37,
                 personal_id: "12345678900".into(),
                 citizenship: "PL".into(),
-            }
+            },
         );
         ServerImpl {
             users: Arc::new(RwLock::new(users)),
@@ -164,16 +167,36 @@ impl openapi::apis::users::Users for ServerImpl {
                 "404".into(),
             ))),
             Some(user) => {
-                collection
-                    .remove(&path_params.id);
-                collection
-                    .insert(path_params.id, body.user.clone());
+                collection.remove(&path_params.id);
+                collection.insert(path_params.id, body.user.clone());
                 Ok(UpdateUserResponse::Status200_Success(UserResponse {
                     response_header: build_request_header(),
                     user: body.user.clone(),
                 }))
             }
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct JwtClaims {
+    scope: Vec<String>,
+    exp: i64,
+    jti: String,
+    client_id: String,
+}
+
+fn validate_jwt_token(token: &str, public_key: &str) -> Result<JwtClaims, String> {
+    let mut validation = Validation::new(Algorithm::RS256);
+    let decoding_key = match DecodingKey::from_rsa_pem(public_key.as_bytes()) {
+        Ok(key) => key,
+        Err(_) => return Err("Failed to parse public key".to_string()),
+    };
+
+    // Decode and validate the token
+    match jsonwebtoken::decode::<JwtClaims>(token, &decoding_key, &validation) {
+        Ok(token_data) => Ok(token_data.claims),
+        Err(err) => Err(format!("Token validation failed: {}", err)),
     }
 }
 
@@ -201,7 +224,26 @@ impl ApiKeyAuthHeader for ServerImpl {
         Self: 'async_trait,
     {
         match _key {
-            "Bearer" => Box::pin(async move { Some(()) }),
+            "Bearer" => {
+                let key = "-----BEGIN CERTIFICATE-----MIIDQDCCAiigAwIBAgIEX8EtRzANBgkqhkiG9w0BAQsFADBiMQswCQYDVQQGEwJQTDELMAkGA1UECAwCWlMxETAPBgNVBAcMCFN6Y3plY2luMQswCQYDVQQKDAJXSTEMMAoGA1UECwwDWlVUMRgwFgYDVQQDDA9QQkEgQVVUSCBTRVJWRVIwHhcNMjAxMTI3MTY0NTU5WhcNMjExMTI3MTY0NTU5WjBiMQswCQYDVQQGEwJQTDELMAkGA1UECAwCWlMxETAPBgNVBAcMCFN6Y3plY2luMQswCQYDVQQKDAJXSTEMMAoGA1UECwwDWlVUMRgwFgYDVQQDDA9QQkEgQVVUSCBTRVJWRVIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDEFcp+Uic4iKcGvZjSsQH1WQOn/5vNcwHRw+v3jAtSxXa5jzAjSPYmiuYmZTYmU1aIiCckVU0HMWG85NPp55Evvb54odYKJnPYUoRyNNM+3XkF2Pvwd7lYvPcHl7MK9kylgdszz41DXAKRC3cb9ku3FnvWGPrRXT9HFc/WW0VJxncgYXM2kjWfDXV+hBPN47GaBi7SK6ohBdgFroilsFHZUpwpdr1rgzh7aMHoWKx+cRp7vTUqGaMcw+jelTDNG2txJ6AFOa0QJBpbrrImJtexoSsvPhHSUSXKMCDy4PghkuueLbpXXYeot6tVjeC5GblTaz1TYcEMpWiEP99NMnQzAgMBAAEwDQYJKoZIhvcNAQELBQADggEBAC1Re3Fh6BmMuX+rdu3OWbX9WONw7xYTWaXDvGtg/qczTIp4DA6YlxpTCMLANnepHpk4O9b1ml2ukWzymq+YuT4XzBZU2RtHwtHqaal/KTHGYsVY9t8W6aUEArPdrUeQ3bIzj19KZbRawlA9o6tWRDBDnF8fPAxNLz0YjWHAhZC5TgPbmgWcTOQ5ddrJ5vrQWI9spRtWCuAXLz1dBgqujtBgTls5eU1nYWkH7Wy42TePWKIJDbIwQrb8wJWih/7BS2O0Skpa3T8Z3mryIfoaLZLrY9tn5sBXl3fILwce+Or6NDTV0toBb2gNTBJNNei+0jKD9yoAl8ffxN+o8x4uzYg=-----END CERTIFICATE-----";
+                let value = _headers
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok());
+                if let Some(value) = value {
+                    let token_str = value.replace("Bearer ", "");
+                    println!("Flaga 1");
+                    println!("{:?}", token_str);
+                    let token = validate_jwt_token(&token_str, key);
+                    if let Ok(token) = token {
+                        Box::pin(async move { Some(()) })
+                    } else {
+                        token.err().map(|e| println!("{:?}", e));
+                        Box::pin(async move { None })
+                    }
+                } else {
+                    Box::pin(async move { None })
+                }
+            }
             "Basic" => {
                 let value = _headers
                     .get("Authorization")
