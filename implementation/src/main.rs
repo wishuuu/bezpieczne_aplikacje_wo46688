@@ -1,8 +1,10 @@
+mod signatures;
+
 use async_trait::async_trait;
 use axum::extract::Host;
+use axum::middleware::{self};
 use axum_extra::extract::CookieJar;
 use base64::prelude::*;
-use hmac::{Hmac, Mac};
 use http::Method;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use openapi::apis::users::{
@@ -14,7 +16,7 @@ use openapi::models::{
     CreateRequest, DeleteUserPathParams, Error, GetUserByIdPathParams, RequestHeader,
     ResponseHeader, UpdateRequest, UpdateUserPathParams, User, UserListResponse, UserResponse,
 };
-use serde::{Deserialize, Serialize};
+use signatures::{verify_hmac_signature, verify_jws_signature, JwtClaims, SecretsConfig};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -178,14 +180,6 @@ impl openapi::apis::users::Users for ServerImpl {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct JwtClaims {
-    scope: Vec<String>,
-    exp: i64,
-    jti: String,
-    client_id: String,
-}
-
 fn validate_jwt_token(token: &str, public_key: &str) -> Result<JwtClaims, String> {
     let mut validation = Validation::new(Algorithm::RS256);
     let decoding_key = match DecodingKey::from_rsa_pem(public_key.as_bytes()) {
@@ -270,10 +264,26 @@ impl ApiKeyAuthHeader for ServerImpl {
 
 pub async fn start_server(addr: &str) {
     // Init Axum router
+
+    let config = Arc::new(SecretsConfig {
+        hmac_secret: "".into(),
+        jws_secret: b"".to_vec(),
+        allowed_algorithms: vec![Algorithm::RS256],
+    });
+
     let app = openapi::server::new(Arc::new(ServerImpl::new()));
 
     // Add layers to the router
     // let app = app.layer(...);
+    let app = app
+        .layer(middleware::from_fn_with_state(
+            config.clone(),
+            verify_hmac_signature,
+        ))
+        .layer(middleware::from_fn_with_state(
+            config.clone(),
+            verify_jws_signature,
+        ));
 
     // Run the server with graceful shutdown
     let listener = TcpListener::bind(addr).await.unwrap();

@@ -7,7 +7,7 @@ edition = "2021"
 openapi = { path = "../openapi-rust" }
 
 async-trait = "0.1"
-axum = "0.7"
+axum = { version = "0.7", features = ["macros"] }
 axum-extra = { version = "0.9", features = ["cookie", "multipart"] }
 base64 = "0.22"
 bytes = "1"
@@ -32,3 +32,4 @@ uuid = { version = "1", features = ["serde", "v4"] }
 validator = { version = "0.19", features = ["derive"] }
 hmac = "0.12.1"
 jsonwebtoken = "9.3.0"
+sha2 = "0.10.8"
