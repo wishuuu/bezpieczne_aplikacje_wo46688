@@ -3,6 +3,9 @@ mod signatures;
 use async_trait::async_trait;
 use axum::extract::Host;
 use axum::middleware::{self};
+use axum::response::IntoResponse;
+use axum::routing::post;
+use axum::Json;
 use axum_extra::extract::CookieJar;
 use base64::prelude::*;
 use http::Method;
@@ -262,12 +265,24 @@ impl ApiKeyAuthHeader for ServerImpl {
     }
 }
 
+pub async fn get_body_hash_hmac(body: String) -> Json<String> {
+    let body = body.as_bytes();
+    let hmac_signature = signatures::create_hmac_signature("123456", body);
+    Json(hmac_signature)
+}
+
+pub async fn get_body_hash_jws(body: String) -> Json<String> {
+    let body = body.as_bytes();
+    let jws_signature = signatures::create_jws_signature(b"123456", body);
+    Json(jws_signature)
+}
+
 pub async fn start_server(addr: &str) {
     // Init Axum router
 
     let config = Arc::new(SecretsConfig {
-        hmac_secret: "".into(),
-        jws_secret: b"".to_vec(),
+        hmac_secret: "123456".into(),
+        jws_secret: b"123456".to_vec(),
         allowed_algorithms: vec![Algorithm::RS256],
     });
 
@@ -283,7 +298,9 @@ pub async fn start_server(addr: &str) {
         .layer(middleware::from_fn_with_state(
             config.clone(),
             verify_jws_signature,
-        ));
+        ))
+        .route("/hash/hmac", post(get_body_hash_hmac))
+        .route("/hash/jws", post(get_body_hash_jws));
 
     // Run the server with graceful shutdown
     let listener = TcpListener::bind(addr).await.unwrap();
