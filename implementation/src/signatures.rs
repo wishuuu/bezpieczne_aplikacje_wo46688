@@ -8,7 +8,6 @@ use axum::{
 use base64::{engine::general_purpose, Engine};
 use hmac::{Hmac, Mac};
 use http::StatusCode;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -16,7 +15,6 @@ use sha2::{Digest, Sha256};
 pub struct SecretsConfig {
     pub hmac_secret: String,
     pub jws_secret: Vec<u8>,
-    pub allowed_algorithms: Vec<Algorithm>,
 }
 
 #[derive(Debug)]

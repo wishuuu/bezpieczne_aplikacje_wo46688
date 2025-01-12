@@ -1,13 +1,15 @@
+pub mod encryption;
 mod signatures;
 
+use aes_gcm::aead::OsRng;
 use async_trait::async_trait;
 use axum::extract::Host;
 use axum::middleware::{self};
-use axum::response::IntoResponse;
 use axum::routing::post;
-use axum::Json;
+use axum::{Json, Router};
 use axum_extra::extract::CookieJar;
 use base64::prelude::*;
+use encryption::{get_body_decryption, get_body_encryption};
 use http::Method;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use openapi::apis::users::{
@@ -19,7 +21,10 @@ use openapi::models::{
     CreateRequest, DeleteUserPathParams, Error, GetUserByIdPathParams, RequestHeader,
     ResponseHeader, UpdateRequest, UpdateUserPathParams, User, UserListResponse, UserResponse,
 };
+use rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use signatures::{verify_hmac_signature, verify_jws_signature, JwtClaims, SecretsConfig};
+use std::io::Write;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -28,12 +33,12 @@ use uuid::{uuid, Uuid};
 use validator::Validate;
 
 struct ServerImpl {
-    // database: sea_orm::DbConn,
     users: Arc<RwLock<std::collections::HashMap<Uuid, User>>>,
+    skip_auth: bool,
 }
 
 impl ServerImpl {
-    fn new() -> Self {
+    fn new(skip_auth: bool) -> Self {
         let mut users = std::collections::HashMap::new();
         users.insert(
             uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"),
@@ -47,8 +52,10 @@ impl ServerImpl {
                 citizenship: "PL".into(),
             },
         );
+
         ServerImpl {
             users: Arc::new(RwLock::new(users)),
+            skip_auth,
         }
     }
 }
@@ -64,6 +71,26 @@ fn build_request_header() -> RequestHeader {
     RequestHeader {
         request_id: Uuid::new_v4(),
         send_date: chrono::Utc::now(),
+    }
+}
+
+#[allow(unused_variables)]
+impl ServerImpl {
+    async fn create_user_func(&self, mut body: CreateRequest) -> Option<User> {
+        let uuid = Uuid::new_v4();
+        body.user.id = Some(uuid);
+        self.users.write().await.insert(uuid, body.user.clone())
+    }
+    async fn delete_user_func(&self, path_params: DeleteUserPathParams) -> Option<User> {
+        self.users.write().await.remove(&path_params.id)
+    }
+    async fn get_all_users_func(&self) -> Vec<User> {
+        self.users
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
     }
 }
 
@@ -184,7 +211,7 @@ impl openapi::apis::users::Users for ServerImpl {
 }
 
 fn validate_jwt_token(token: &str, public_key: &str) -> Result<JwtClaims, String> {
-    let mut validation = Validation::new(Algorithm::RS256);
+    let validation = Validation::new(Algorithm::RS256);
     let decoding_key = match DecodingKey::from_rsa_pem(public_key.as_bytes()) {
         Ok(key) => key,
         Err(_) => return Err("Failed to parse public key".to_string()),
@@ -220,6 +247,9 @@ impl ApiKeyAuthHeader for ServerImpl {
         'c: 'async_trait,
         Self: 'async_trait,
     {
+        if self.skip_auth {
+            return Box::pin(async move { Some(()) });
+        }
         match _key {
             "Bearer" => {
                 let key = "-----BEGIN CERTIFICATE-----MIIDQDCCAiigAwIBAgIEX8EtRzANBgkqhkiG9w0BAQsFADBiMQswCQYDVQQGEwJQTDELMAkGA1UECAwCWlMxETAPBgNVBAcMCFN6Y3plY2luMQswCQYDVQQKDAJXSTEMMAoGA1UECwwDWlVUMRgwFgYDVQQDDA9QQkEgQVVUSCBTRVJWRVIwHhcNMjAxMTI3MTY0NTU5WhcNMjExMTI3MTY0NTU5WjBiMQswCQYDVQQGEwJQTDELMAkGA1UECAwCWlMxETAPBgNVBAcMCFN6Y3plY2luMQswCQYDVQQKDAJXSTEMMAoGA1UECwwDWlVUMRgwFgYDVQQDDA9QQkEgQVVUSCBTRVJWRVIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDEFcp+Uic4iKcGvZjSsQH1WQOn/5vNcwHRw+v3jAtSxXa5jzAjSPYmiuYmZTYmU1aIiCckVU0HMWG85NPp55Evvb54odYKJnPYUoRyNNM+3XkF2Pvwd7lYvPcHl7MK9kylgdszz41DXAKRC3cb9ku3FnvWGPrRXT9HFc/WW0VJxncgYXM2kjWfDXV+hBPN47GaBi7SK6ohBdgFroilsFHZUpwpdr1rgzh7aMHoWKx+cRp7vTUqGaMcw+jelTDNG2txJ6AFOa0QJBpbrrImJtexoSsvPhHSUSXKMCDy4PghkuueLbpXXYeot6tVjeC5GblTaz1TYcEMpWiEP99NMnQzAgMBAAEwDQYJKoZIhvcNAQELBQADggEBAC1Re3Fh6BmMuX+rdu3OWbX9WONw7xYTWaXDvGtg/qczTIp4DA6YlxpTCMLANnepHpk4O9b1ml2ukWzymq+YuT4XzBZU2RtHwtHqaal/KTHGYsVY9t8W6aUEArPdrUeQ3bIzj19KZbRawlA9o6tWRDBDnF8fPAxNLz0YjWHAhZC5TgPbmgWcTOQ5ddrJ5vrQWI9spRtWCuAXLz1dBgqujtBgTls5eU1nYWkH7Wy42TePWKIJDbIwQrb8wJWih/7BS2O0Skpa3T8Z3mryIfoaLZLrY9tn5sBXl3fILwce+Or6NDTV0toBb2gNTBJNNei+0jKD9yoAl8ffxN+o8x4uzYg=-----END CERTIFICATE-----";
@@ -231,7 +261,7 @@ impl ApiKeyAuthHeader for ServerImpl {
                     println!("Flaga 1");
                     println!("{:?}", token_str);
                     let token = validate_jwt_token(&token_str, key);
-                    if let Ok(token) = token {
+                    if let Ok(_token) = token {
                         Box::pin(async move { Some(()) })
                     } else {
                         token.err().map(|e| println!("{:?}", e));
@@ -277,21 +307,31 @@ pub async fn get_body_hash_jws(body: String) -> Json<String> {
     Json(jws_signature)
 }
 
-pub async fn start_server(addr: &str) {
-    // Init Axum router
-
+pub async fn get_app(skip_singnatures: bool) -> Router {
     let config = Arc::new(SecretsConfig {
         hmac_secret: "123456".into(),
         jws_secret: b"123456".to_vec(),
-        allowed_algorithms: vec![Algorithm::RS256],
     });
 
-    let app = openapi::server::new(Arc::new(ServerImpl::new()));
+    let mut rng = OsRng;
+    let bits = 2048;
+    let private = &RsaPrivateKey::new(&mut rng, bits).unwrap();
+    let public = &RsaPublicKey::from(private);
+    let private_pem = private
+        .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+        .unwrap()
+        .to_string();
+    let public_pem = public.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF).unwrap();
 
-    // Add layers to the router
-    // let app = app.layer(...);
-    let app = app
-        .layer(middleware::from_fn_with_state(
+    let mut file = std::fs::File::create("private.pem").unwrap();
+    file.write_all(private_pem.as_bytes()).unwrap();
+    let mut file = std::fs::File::create("public.pem").unwrap();
+    file.write_all(public_pem.as_bytes()).unwrap();
+
+    let app = openapi::server::new(Arc::new(ServerImpl::new(skip_singnatures)));
+
+    if !skip_singnatures {
+        app.layer(middleware::from_fn_with_state(
             config.clone(),
             verify_hmac_signature,
         ))
@@ -300,7 +340,16 @@ pub async fn start_server(addr: &str) {
             verify_jws_signature,
         ))
         .route("/hash/hmac", post(get_body_hash_hmac))
-        .route("/hash/jws", post(get_body_hash_jws));
+        .route("/hash/jws", post(get_body_hash_jws))
+        .route("/encData", post(get_body_encryption))
+        .route("/decData", post(get_body_decryption))
+    } else {
+        app
+    }
+}
+
+pub async fn start_server(addr: &str) {
+    let app = get_app(false).await;
 
     // Run the server with graceful shutdown
     let listener = TcpListener::bind(addr).await.unwrap();
@@ -337,4 +386,53 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() {
     start_server("0.0.0.0:8080").await;
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn add_user() {
+        let server = ServerImpl::new(true);
+
+        let users = server.get_all_users_func().await;
+        assert_eq!(users.len(), 1);
+
+        let request_body = json!({
+            "requestHeader": {
+                "requestId": "123e4567-e89b-12d3-a456-426614174000",
+                "sendDate": "2024-11-23T12:00:00Z"
+            },
+            "user": {
+                "name": "John",
+                "surname": "Doe",
+                "age": 30,
+                "personalId": "12345678900",
+                "citizenship": "PL"
+            }
+        });
+
+        let user = serde_json::from_value::<CreateRequest>(request_body).unwrap();
+
+        server.create_user_func(user).await;
+
+        let users = server.get_all_users_func().await;
+        assert_eq!(users.len(), 2);
+
+        let deletion = server
+            .delete_user_func(DeleteUserPathParams {
+                id: uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"),
+            })
+            .await;
+        assert!(deletion.is_some());
+        let deletion = server
+            .delete_user_func(DeleteUserPathParams {
+                id: uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"),
+            })
+            .await;
+        assert!(deletion.is_none());
+    }
 }
