@@ -57,10 +57,10 @@ pub async fn get_body_encryption(body: String) -> Json<EncryptedDataDto> {
     // generate random 32 bytes key
     let mut key = [0u8; 32];
     OsRng.fill_bytes(&mut key);
-    let mut key = encrypt_key(&public_key, &key).unwrap();
-    key = key[..32].to_vec();
+    println!("Encryption key: {:?}", key);
+    let key_rsa = encrypt_key(&public_key, &key).unwrap();
 
-    let key = Key::<Aes256Gcm>::from_slice(&key);
+    let key = Key::<Aes256Gcm>::from_slice(&key[..32]);
 
     let nonce = [0u8; 12];
     let nonce = Nonce::from_slice(&nonce);
@@ -74,7 +74,7 @@ pub async fn get_body_encryption(body: String) -> Json<EncryptedDataDto> {
     let mut encrypted_data: Vec<u8> = nonce.to_vec();
     encrypted_data.extend_from_slice(&ciphered_data);
 
-    let key_str = BASE64_STANDARD.encode(key);
+    let key_str = BASE64_STANDARD.encode(key_rsa);
     let encrypted_data = BASE64_STANDARD.encode(encrypted_data);
 
     Json(EncryptedDataDto::new(encrypted_data, key_str))
@@ -88,13 +88,15 @@ pub async fn get_body_decryption(body: Json<EncryptedDataDto>) -> String {
 
     let k = BASE64_STANDARD.decode(body.key.as_bytes()).unwrap();
     let k = decrypt_key(&private_key, &k).unwrap();
+    println!("Decryption key: {:?}", k);
     let d = BASE64_STANDARD.decode(body.data.as_bytes()).unwrap();
+    println!("Decryption data: {:?}", d);
 
     let nonce = Nonce::from_slice(&d[0..12]);
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&k));
 
-    let decrypted_data = cipher.decrypt(nonce, &d[12..]).expect("failed to decrypt");
+    let decrypted_data = cipher.decrypt(nonce, &d[12..]).unwrap();
 
     String::from_utf8(decrypted_data).unwrap()
 }
